@@ -1,71 +1,71 @@
-# photo-doodle-people-poster
+# 照片涂鸦小人海报
 
-把一张真实照片做成 **白底 + 手写短句 + 黑色涂鸦小人** 的海报，**全程本地渲染，不需要任何图像生成模型**。
+把一张照片，做成一张白底海报：照片里的东西原样保留，旁边写一句手写体的短话，周围画四五个黑色线稿小人。
 
-适合在 coding agent 环境里用：给一张图，几秒钟出图，不满意改几个坐标再跑一次。
+**全程在本机算，不需要 AI 生成图片。** 几秒钟出图，不满意改两个数字再来一次。
 
-```
-照片  →  Vision 抠图  →  白底柔影  →  手写字体短句 + 箭头  →  代码绘制的涂鸦小人
-```
+## 为什么不用 AI 生图
 
-## 为什么不用生图模型
+文字生图的模型拿不到你那张照片，只能凭描述"想象"一道菜，出来的不是你的。
 
-文生图模型拿不到你的原图，只能用文字"想象"一道菜；参考图编辑模型能做到，但很多环境里没有。
+这个工具换了个做法：东西直接从照片里抠出来（保真），小人用代码画（可控）。少了点手绘的松弛感，换来的是——想改哪里就改哪里，不用抽卡。
 
-这个工具换了个思路：主体直接抠原图（保真），小人用代码画（可控）。牺牲一点手绘的松弛感，换来确定性和可迭代。
+## 电脑上需要什么
 
-## 环境要求
+- macOS 14 或更新（抠图用的是系统自带能力）
+- Python 3.9 以上，装两个库：`pillow`、`numpy`
+- Xcode 命令行工具（第一次运行会自动编译一个小工具）
 
-- macOS 14+（抠图用 Vision 框架）
-- Python 3.9+：`pillow`，`numpy`（缺 numpy 时跳过字体形变，仍可用）
-- Xcode Command Line Tools（首次运行自动编译 `swiftc` 抠图工具）
-
-## 安装
+## 装
 
 ```bash
 mkdir -p ~/.codebuddy/skills
-git clone <this-repo> ~/.codebuddy/skills/photo-doodle-people-poster
+git clone https://github.com/emmazangAI/photo-doodle-people-poster.git \
+  ~/.codebuddy/skills/photo-doodle-people-poster
 ```
 
-作为 CodeBuddy / Claude 风格的 skill 使用时，把目录放在 skills 路径下即可，`SKILL.md` 里有完整工作流。
+放进 skills 目录后，`SKILL.md` 里写了完整用法，AI 会自己读。
 
-## 用法
+## 用
+
+先看一眼抠出来是什么样，顺便拿到主体的位置：
 
 ```bash
-# 1) 先看一眼主体抠出来的范围，拿到包围盒
-python3 scripts/compose.py --image photo.jpg --out probe.jpg --print-bbox
-# {"subject_bbox": [0.0, 0.4087, 1.0, 0.7104], "canvas": [1536, 2048]}
-
-# 2) 写 figures.json，然后正式出图
-python3 scripts/compose.py --image photo.jpg --figures figs.json --out poster.jpg
+python3 scripts/compose.py --image 照片.jpg --out probe.jpg --print-bbox
 ```
 
-最短的一次调用：
+然后写好小人的 JSON，正式出图：
 
 ```bash
-python3 scripts/compose.py --image photo.heic --text "先来一块" --out poster.jpg
+python3 scripts/compose.py --image 照片.jpg --figures 小人.json --out 海报.jpg
 ```
 
-### 参数
+只想加一句话、不画小人，一条命令就够：
 
-| 参数 | 默认 | 说明 |
+```bash
+python3 scripts/compose.py --image 照片.heic --text "先来一块" --out 海报.jpg
+```
+
+## 能调的参数
+
+| 参数 | 默认 | 干什么 |
 | --- | --- | --- |
-| `--image` | 必填 | 照片，支持 HEIC |
-| `--out` | 必填 | 输出路径，`.jpg` 会同时存一份 PNG |
-| `--figures` | 无 | JSON 文件或内联 JSON |
-| `--ratio` | `3:4` | `3:4` `4:5` `1:1` `9:16` `2:3` |
-| `--subject-y` | `0.50` | 主体中心纵向位置 |
-| `--subject-w` | 自动 | 主体宽度占比，宽扁主体自动取 1.0 |
-| `--text` | 无 | 文案，2–5 个汉字 |
-| `--text-size` | 画布高 ×0.077 | 字号 |
-| `--font` | 自动 | 自动找系统手写体，找不到退回黑体并做形变 |
-| `--erase` | 无 | 擦掉入镜的手、餐具等，可重复；矩形 `x0,y0,x1,y1`，多边形 `x0,y0 x1,y1 ...` |
-| `--seed` | `7` | 笔画抖动种子 |
-| `--print-bbox` | 关 | 只打印主体包围盒 |
+| `--image` | 必填 | 照片，HEIC 可以直接给 |
+| `--out` | 必填 | 存到哪 |
+| `--figures` | 不给也行 | 小人和短句的 JSON |
+| `--ratio` | `3:4` | 也能选 `4:5`、`1:1`、`9:16`、`2:3` |
+| `--subject-y` | `0.50` | 主体在图上的高低 |
+| `--subject-w` | 自动 | 主体占多宽 |
+| `--text` | 不给也行 | 短句，2 到 5 个字 |
+| `--text-size` | 图高 ×0.077 | 字多大 |
+| `--font` | 自动 | 自动找手写字体 |
+| `--erase` | 不给也行 | 擦掉入镜的手、餐具，能擦好几块 |
+| `--seed` | `7` | 换个数，笔触变个样 |
+| `--print-bbox` | 关 | 只打印主体位置 |
 
-## 小人怎么写
+## 小人怎么摆
 
-小人不是选模板，是每一张照片现写坐标：髋点在哪、手伸到哪个位置、脚踩在哪。完整规格见 [`references/figure-json.md`](references/figure-json.md)。
+小人不是选模板，是每张照片现写坐标：站在哪、手伸到哪、脚踩在哪。完整写法见 [`references/figure-json.md`](references/figure-json.md)。
 
 ```json
 {
@@ -76,17 +76,17 @@ python3 scripts/compose.py --image photo.heic --text "先来一块" --out poster
 }
 ```
 
-两条经验：
+两条踩过的坑：
 
-- `hip` 是髋点，不是脚底；一条腿约 `40 × scale` 像素，脚写太远会变成蜘蛛腿。
-- 深色主体上黑色线条会消失。把小人放在白底或浅色部位，不要给小人物加白描边。
+- `hip` 是屁股的位置，不是脚底。脚的纵坐标大概写"屁股 + 0.04"，写远了腿会变蜘蛛腿。
+- 黑色的东西上，黑线小人会看不见。把小人放在白底或者浅色部位，别加白边。
 
-## 已知限制
+## 干不了的事
 
-- 小人由几何线条绘制，干净但不"松"，比不上生图模型的手绘质感。
-- Vision 抠图对透明、高反光、与背景同色的主体容易失败。
-- 手写字体依赖 macOS 自带字体；其他系统请用 `--font` 指定一个手写字体文件。
+- 小人是线条画的，干净，但不"松"，跟生图模型的手绘感不是一回事。
+- 透明、反光、跟背景同色的东西，抠不干净。
+- 手写字体用的是 macOS 自带字体，别的系统得自己指定一个字体文件。
 
-## License
+## 许可
 
 MIT
