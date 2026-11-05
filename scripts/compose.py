@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-photo-doodle-people-poster / compose.py
+doodle-poster / compose.py
 
 把一张真实照片做成「白底 + 手写短句 + 黑色涂鸦小人」的海报。
 主体抠图用 macOS Vision，版式与涂鸦由本脚本确定性绘制，不依赖任何生图模型。

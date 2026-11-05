@@ -1,4 +1,4 @@
-# photo-doodle-people-poster（照片涂鸦小人海报）
+# doodle-poster（照片涂鸦小人海报）
 
 把一张真实照片做成 **白底 + 手写短句 + 黑色涂鸦小人** 的海报，**全程本地渲染，不需要任何图像生成模型**。
 
@@ -24,7 +24,7 @@
 
 ```bash
 mkdir -p ~/.codebuddy/skills
-git clone <this-repo> ~/.codebuddy/skills/photo-doodle-people-poster
+git clone https://github.com/emmazangAI/doodle-poster.git ~/.codebuddy/skills/doodle-poster
 ```
 
 作为 CodeBuddy / Claude 风格的 skill 使用时，把目录放在 skills 路径下即可，`SKILL.md` 里有完整工作流。
