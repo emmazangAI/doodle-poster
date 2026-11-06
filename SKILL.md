@@ -38,11 +38,17 @@ sips -s format jpeg -s formatOptions 95 in.HEIC --out in.jpg   # 只有 HEIC 才
 ### 2. 抠图并拿到主体位置
 
 ```bash
-python3 scripts/compose.py --image in.jpg --out /tmp/probe.jpg --print-bbox
+python3 scripts/compose.py --image in.jpg --out /tmp/probe.jpg --print-outline
 ```
 
-输出形如 `{"subject_bbox": [0.0, 0.409, 1.0, 0.711], "canvas": [1536, 2048]}`。
-**后续所有小人坐标都相对于这个 bbox 来写**，这是让小人"贴在主体上"而不是飘在空中的唯一依据。
+输出形如：
+
+```json
+{"canvas": [1536, 2048], "outline": {"top": 0.202, "bottom": 0.797,
+  "rows": [{"y": 0.0, "py": 0.2021, "left": 0.2806, "right": 0.2995, "width": 0.0189}, ...]}}
+```
+
+`rows` 每隔 5% 高度给一行主体左右边界（画布归一化）。**小人手脚的坐标要基于这份数据，不要靠肉眼估**。更省事的做法：手放在边缘附近，加 `"snap": "hands"` 让脚本自动吸附到真实轮廓。
 
 首次运行会自动 `swiftc` 编译抠图工具（约 20 秒），之后走缓存。
 
@@ -55,7 +61,8 @@ python3 scripts/compose.py --image in.jpg --out /tmp/probe.jpg --print-bbox
 格式见 `references/figure-json.md`。要点：
 
 - 每位小人的 `hip` 是髋点，不是脚底。
-- `hands` / `feet` 写成明确的目标坐标，让手真的落在主体边缘（板沿、骨节、花瓣、瓶身）。
+- `hands` / `feet` 写成明确的目标坐标，并加 `"snap": "hands"` 把手吸附到主体真实轮廓上（板沿、骨节、花瓣、瓶身）。
+- `hip` 距离主体边缘留 0.03–0.04（归一化宽度），手才不会拉成细长杆。
 - 默认 4–5 位，`scale` 控制在 1.3–2.1；位于主体外的小人可以大一些，位于主体表面的要小。
 - 腿的总长约为 `40 × scale` 像素，脚点别写得太远，否则腿会被拉长成蜘蛛。
 
@@ -71,7 +78,8 @@ python3 scripts/compose.py --image in.jpg --figures figs.json --out poster.jpg -
 
 | 症状 | 改哪里 |
 | --- | --- |
-| 小人飘在空中 | 把 `hands` 移到 bbox 边缘内侧 2–3 像素处 |
+| 小人飘在空中／够不到 | 加 `"snap": "hands"`；仍悬空说明 `hip` 离主体太远，往边缘挪 |
+| 主体边缘出现直角缺口 | 别用 `--erase` 硬切；改用多边形沿轮廓擦，或去掉 `--erase` |
 | 腿太长像蜘蛛 | `feet` 的 y 收回到 `hip.y + 0.04` 左右 |
 | 小人和主体一样大 | 调小 `scale`，或把主体 `--subject-w` 调大 |
 | 文案压住主体 | 调 `text.y` 往上，或 `--subject-y` 往下 |
@@ -96,7 +104,10 @@ python3 scripts/compose.py --image in.jpg --figures figs.json --out poster.jpg -
 | `--font` | 自动 | 自动找系统手写体（LingWaiSC 优先），找不到退回黑体并做形变 |
 | `--seed` | `7` | 线条抖动随机种子，换个数字笔画会变 |
 | `--erase` | 无 | 擦掉画面杂物，画布归一化坐标，可重复。矩形写 `x0,y0,x1,y1`；多边形写 `x0,y0 x1,y1 x2,y2 ...` |
+| `--erase-feather` | `0.006` | 擦除边缘羽化半径（画布宽度占比），避免留下直角硬切 |
+| `--mend-band` | `0`（关） | （实验）对照片画幅裁断的主体边做渐隐，宽度按主体尺寸占比 |
 | `--print-bbox` | 关 | 只打印主体包围盒 |
+| `--print-outline` | 关 | 打印主体轮廓剖面（每 5% 高度的左右边界） |
 
 ### 擦掉杂物（手、餐具、路人）
 
@@ -107,7 +118,7 @@ python3 scripts/compose.py --image in.jpg --figures figs.json --out poster.jpg -
 --erase "0.58,0 1,0 1,0.55 0.90,0.44 0.78,0.375 0.64,0.335"
 ```
 
-矩形适合擦角落里的独立杂物，多边形适合擦贴着主体边缘的东西。擦完记得重跑 `--print-bbox`，包围盒会变。
+矩形适合擦角落里的独立杂物，多边形适合擦贴着主体边缘的东西。擦除边缘默认带羽化（`--erase-feather`），不会像旧版那样切出一道直角白缺口。擦完记得重跑 `--print-outline`，轮廓会变。
 
 ## 设计规范（与原版一致）
 

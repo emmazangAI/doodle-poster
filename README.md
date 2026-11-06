@@ -32,9 +32,9 @@ git clone https://github.com/emmazangAI/doodle-poster.git ~/.codebuddy/skills/do
 ## 用法
 
 ```bash
-# 1) 先看一眼主体抠出来的范围，拿到包围盒
-python3 scripts/compose.py --image photo.jpg --out probe.jpg --print-bbox
-# {"subject_bbox": [0.0, 0.4087, 1.0, 0.7104], "canvas": [1536, 2048]}
+# 1) 先拿到主体真实轮廓（每 5% 高度的左右边界），坐标不用猜
+python3 scripts/compose.py --image photo.jpg --out probe.jpg --print-outline
+# {"canvas": [1536, 2048], "outline": {"top": 0.202, "bottom": 0.797, "rows": [...]}}
 
 # 2) 写 figures.json，然后正式出图
 python3 scripts/compose.py --image photo.jpg --figures figs.json --out poster.jpg
@@ -60,12 +60,15 @@ python3 scripts/compose.py --image photo.heic --text "先来一块" --out poster
 | `--text-size` | 画布高 ×0.077 | 字号 |
 | `--font` | 自动 | 自动找系统手写体，找不到退回黑体并做形变 |
 | `--erase` | 无 | 擦掉入镜的手、餐具等，可重复；矩形 `x0,y0,x1,y1`，多边形 `x0,y0 x1,y1 ...` |
+| `--erase-feather` | `0.006` | 擦除边缘羽化，避免直角白缺口 |
+| `--mend-band` | `0`（关） | （实验）对照片画幅裁断的主体边做渐隐，宽度按主体尺寸占比 |
 | `--seed` | `7` | 笔画抖动种子 |
 | `--print-bbox` | 关 | 只打印主体包围盒 |
+| `--print-outline` | 关 | 打印主体轮廓剖面 |
 
 ## 小人怎么写
 
-小人不是选模板，是每一张照片现写坐标：髋点在哪、手伸到哪个位置、脚踩在哪。完整规格见 [`references/figure-json.md`](references/figure-json.md)。
+小人不是选模板，是每一张照片现写坐标：髋点在哪、手伸到哪个位置、脚踩在哪。手的位置加 `"snap": "hands"`，运行时会被吸附到主体真实轮廓上，并画出扣住边缘的小爪。完整规格见 [`references/figure-json.md`](references/figure-json.md)。
 
 ```json
 {

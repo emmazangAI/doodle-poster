@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 HERE = Path(__file__).resolve().parent
 BIN = HERE / "bin" / "cutout"
@@ -74,7 +74,6 @@ def ensure_cutout(image_path):
 
 def clean_alpha(img):
     """补掉木板缝、叶片间隙这类被误判成背景的小洞"""
-    from PIL import ImageChops  # noqa: F401
     alpha = img.getchannel("A")
     solid = alpha.point(lambda v: 255 if v > 40 else 0)
     probe = solid.copy()
@@ -102,7 +101,137 @@ def load_subject(image_path):
     bbox = cut.getbbox()
     if not bbox:
         raise SystemExit("抠图失败：没有识别到主体")
-    return cut.crop(bbox)
+    # 照片本身把主体切掉的边：这些边是被画幅裁断的，不能靠抠图补回来
+    w, h = cut.size
+    clipped = {"left": bbox[0] <= 2, "top": bbox[1] <= 2,
+               "right": bbox[2] >= w - 2, "bottom": bbox[3] >= h - 2}
+    return cut.crop(bbox), clipped
+
+
+def _ramp(w, h, ease=1.35):
+    """0 -> 255 的横向渐变，给裁断的边缘做渐隐。"""
+    g = Image.new("L", (max(1, w), max(1, h)))
+    d = ImageDraw.Draw(g)
+    for i in range(w):
+        d.line([(i, 0), (i, h)], fill=int(255 * ((i + 1) / w) ** ease))
+    return g
+
+
+def mend_edges(layer, box, clipped, band=0.03):
+    """主体被画幅裁断的边做渐隐，避免出现一刀切的直线白口。"""
+    if not any(clipped.values()):
+        return layer
+    W, H = layer.size
+    x0, y0, x1, y1 = box
+    bw = max(6, int((x1 - x0) * band))
+    bh = max(6, int((y1 - y0) * band))
+    mask = Image.new("L", (W, H), 255)
+    if clipped.get("left"):
+        x1c = min(W, x0 + bw)
+        r = mask.crop((x0, y0, x1c, y1))
+        mask.paste(ImageChops.multiply(r, _ramp(x1c - x0, y1 - y0, 1.0)), (x0, y0))
+    if clipped.get("right"):
+        x0c = max(0, x1 - bw)
+        r = mask.crop((x0c, y0, x1, y1))
+        mask.paste(ImageChops.multiply(r, _ramp(x1 - x0c, y1 - y0, 1.0).transpose(Image.FLIP_LEFT_RIGHT)), (x0c, y0))
+    if clipped.get("top"):
+        y1c = min(H, y0 + bh)
+        r = mask.crop((x0, y0, x1, y1c))
+        mask.paste(ImageChops.multiply(r, _ramp(y1c - y0, x1 - x0, 1.0).transpose(Image.ROTATE_270)), (x0, y0))
+    if clipped.get("bottom"):
+        y0c = max(0, y1 - bh)
+        r = mask.crop((x0, y0c, x1, y1))
+        mask.paste(ImageChops.multiply(r, _ramp(y1 - y0c, x1 - x0, 1.0).transpose(Image.ROTATE_90)), (x0, y0c))
+    layer.putalpha(ImageChops.multiply(layer.getchannel("A"), mask))
+    return layer
+
+
+# ---------------- 轮廓剖面 ----------------
+class Outline:
+    """主体真实轮廓：逐行扫描 alpha，得到每个高度上的左右边界。
+
+    figures 里可以直接写 {"edge": "left", "y": 0.35, "inset": 0.006} 让手脚落在
+    真实边缘上，而不是靠肉眼估坐标。
+    """
+
+    def __init__(self, rows, size, threshold=40):
+        self.rows = rows            # [(y, left, right), ...] 自上而下
+        self.W, self.H = size
+        self.threshold = threshold
+
+    @classmethod
+    def from_layer(cls, layer, threshold=40):
+        a = layer.getchannel("A")
+        w, h = a.size
+        bbox = a.getbbox()
+        if not bbox:
+            return None
+        rows = []
+        try:
+            import numpy as np
+            arr = np.array(a) > threshold
+            for y in range(bbox[1], bbox[3]):
+                xs = np.flatnonzero(arr[y])
+                if xs.size:
+                    rows.append((y, int(xs[0]), int(xs[-1])))
+        except ImportError:
+            px = a.load()
+            for y in range(bbox[1], bbox[3]):
+                left = next((x for x in range(bbox[0], bbox[2]) if px[x, y] > threshold), None)
+                if left is None:
+                    continue
+                right = next(x for x in range(bbox[2] - 1, left - 1, -1) if px[x, y] > threshold)
+                rows.append((y, left, right))
+        return cls(rows, (w, h), threshold) if rows else None
+
+    @property
+    def top(self):
+        return self.rows[0][0]
+
+    @property
+    def bottom(self):
+        return self.rows[-1][0]
+
+    def row_at(self, frac):
+        y = self.top + (self.bottom - self.top) * min(max(frac, 0.0), 1.0)
+        return min(self.rows, key=lambda r: abs(r[0] - y))
+
+    def point(self, frac, side="left", inset=0.0):
+        """side=left/right；inset>0 往主体内侧缩，<0 往外探（抓手感用负值）。"""
+        _, left, right = self.row_at(frac)
+        x = left if side == "left" else right
+        x = x + inset * self.W if side == "left" else x - inset * self.W
+        y = self.row_at(frac)[0]
+        return (x / self.W, y / self.H)
+
+    def nearest(self, px, py, inset=0.0):
+        """把任意像素点投到最近的轮廓边缘上，手脚就不会悬空。"""
+        best, bd = None, None
+        for y, left, right in self.rows:
+            for x, side in ((left, -1), (right, 1)):
+                d = (x - px) ** 2 + (y - py) ** 2
+                if bd is None or d < bd:
+                    bd, best = d, (x - side * inset * self.W, y)
+        return best
+
+    def profile(self, step=0.05):
+        fracs = []
+        i = 0
+        while i <= 20:
+            f = i / 20
+            y, left, right = self.row_at(f)
+            fracs.append({"y": round(f, 2),
+                          "py": round(y / self.H, 4),
+                          "left": round(left / self.W, 4),
+                          "right": round(right / self.W, 4),
+                          "width": round((right - left) / self.W, 4)})
+            i += int(round(step * 20)) or 1
+        return fracs
+
+    def describe(self):
+        return {"top": round(self.top / self.H, 4),
+                "bottom": round(self.bottom / self.H, 4),
+                "rows": self.profile()}
 
 
 # ---------------- 画笔 ----------------
@@ -137,6 +266,17 @@ class Pen:
             pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
         self.stroke(pts, width=width, jitter=0.6)
 
+    def grip(self, hand, elbow, r=None, width=4):
+        """在手腕处画一个扣住边缘的小爪子，让「扶着」变成「抓住」。"""
+        r = r or 9.0
+        ang = math.atan2(hand[1] - elbow[1], hand[0] - elbow[0])
+        cx, cy = hand[0] + math.cos(ang) * r * 0.25, hand[1] + math.sin(ang) * r * 0.25
+        pts = []
+        for i in range(9):
+            a = ang + math.pi * 0.62 - math.pi * 1.24 * (i / 8)
+            pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
+        self.stroke(pts, width=width, jitter=0.35)
+
     def person(self, hip, s=1.0, lean=0.0, hands=None, feet=None):
         torso, thigh, shin, arm, hr = 26 * s, 21 * s, 19 * s, 19 * s, 13.5 * s
         hx, hy = hip
@@ -153,9 +293,14 @@ class Pen:
 
         if hands is None:
             hands = [(sh[0] - 13 * s, sh[1] + arm * 0.9), (sh[0] + 13 * s, sh[1] + arm * 0.9)]
+            grip = False
+        else:
+            grip = True
         for (hx2, hy2), side in zip(hands, (-1, 1)):
             elbow = ((sh[0] + hx2) / 2 + side * 5 * s, (sh[1] + hy2) / 2)
             self.stroke([sh, elbow, (hx2, hy2)], width=5, jitter=0.8)
+            if grip:
+                self.grip((hx2, hy2), elbow, r=max(7.0, 5.5 * s))
 
     def rib(self, cx, cy, w, h, rot=-6):
         pts = []
@@ -234,8 +379,14 @@ def main():
     ap.add_argument("--font", default=None)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--erase", action="append", default=[],
-                    help="擦掉画面里的杂物：x0,y0,x1,y1（画布归一化），可重复")
+                    help="擦掉画面里的杂物：x0,y0,x1,y1（矩形）或 'x0,y0 x1,y1 x2,y2 ...'（多边形），画布归一化，可重复")
+    ap.add_argument("--erase-feather", type=float, default=None,
+                    help="擦除边缘羽化半径（画布宽度占比），默认 0.006，消除直角切口")
+    ap.add_argument("--mend-band", type=float, default=0,
+                    help="（实验）被画幅裁断的边做渐隐的宽度，主体尺寸占比；0 关闭")
     ap.add_argument("--print-bbox", action="store_true")
+    ap.add_argument("--print-outline", action="store_true",
+                    help="打印主体轮廓剖面：每隔 5%% 高度，主体在该高度的左右边界")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -251,7 +402,7 @@ def main():
         else:
             raise SystemExit(f"找不到 figures 文件：{args.figures}")
 
-    subject = load_subject(args.image)
+    subject, clipped = load_subject(args.image)
     sw = args.subject_w
     if sw is None:
         aspect = subject.width / subject.height
@@ -264,16 +415,25 @@ def main():
 
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     layer.paste(photo, (px, py))
+    feather = args.erase_feather if args.erase_feather is not None else 0.006
     for spec in args.erase:
         spec = spec.strip()
+        mask = Image.new("L", (W, H), 0)
+        md = ImageDraw.Draw(mask)
         if " " in spec:  # 多边形：x0,y0 x1,y1 x2,y2 ...
             pts = [tuple(float(v) for v in p.split(",")) for p in spec.split()]
-            mask = Image.new("L", (W, H), 0)
-            ImageDraw.Draw(mask).polygon([(x * W, y * H) for x, y in pts], fill=255)
-            layer.paste((0, 0, 0, 0), (0, 0), mask)
+            md.polygon([(x * W, y * H) for x, y in pts], fill=255)
         else:            # 矩形：x0,y0,x1,y1
             x0, y0, x1, y1 = [float(v) for v in spec.split(",")]
-            layer.paste((0, 0, 0, 0), (int(x0 * W), int(y0 * H), int(x1 * W), int(y1 * H)))
+            md.rectangle([x0 * W, y0 * H, x1 * W, y1 * H], fill=255)
+        r = max(2, int(W * feather))
+        mask = mask.filter(ImageFilter.GaussianBlur(r))
+        # 用 alpha 相减而不是 paste，边缘是渐变过渡，不会留下直角硬切
+        layer.putalpha(ImageChops.subtract(layer.getchannel("A"), mask))
+
+    if args.mend_band > 0:
+        layer = mend_edges(layer, (px, py, px + photo.width, py + photo.height),
+                           clipped, args.mend_band)
 
     canvas = Image.new("RGBA", (W, H), args.bg)
     shadow = Image.new("L", (W, H), 0)
@@ -286,21 +446,55 @@ def main():
 
     bb = layer.getbbox() or (px, py, px + target_w, py + photo.height)
     bbox = (bb[0] / W, bb[1] / H, bb[2] / W, bb[3] / H)
+    outline = Outline.from_layer(layer)
     if args.print_bbox:
         print(json.dumps({"subject_bbox": [round(v, 4) for v in bbox],
-                          "canvas": [W, H]}))
+                          "canvas": [W, H]}, ensure_ascii=False))
+    if args.print_outline:
+        if not outline:
+            print("warning: 轮廓剖面为空", file=sys.stderr)
+        else:
+            print(json.dumps({"canvas": [W, H], "outline": outline.describe()},
+                             ensure_ascii=False, indent=2))
 
     pen = Pen(canvas, seed=args.seed)
 
     def P(p):
+        """归一化画布坐标 -> 像素。
+
+        也接受轮廓锚点：{"edge": "left"|"right", "y": 0-1, "inset": -0.01}
+        """
+        if isinstance(p, dict):
+            if "edge" not in p:
+                raise SystemExit(f"坐标必须是 [x,y] 或 {{edge,y,inset}}：{p}")
+            if outline is None:
+                raise SystemExit("没有可用的主体轮廓，无法解析 edge 锚点")
+            return tuple(v * s for v, s in
+                         zip(outline.point(p["y"], p["edge"], p.get("inset", 0.0)), (W, H)))
         return (p[0] * W, p[1] * H)
+
+    snap_all = bool(cfg.get("snap"))
+
+    def snap_pt(p, inset, on):
+        if not on:
+            return p
+        if outline is None:
+            return p
+        return outline.nearest(p[0], p[1], inset)
 
     for f in cfg.get("figures", []):
         hx, hy = f["hip"]
         if not (0 <= hx <= 1 and 0 <= hy <= 1):
             print(f"warning: 小人 hip 超出画布 {f['hip']}，会被裁掉", file=sys.stderr)
-        hands = [P(p) for p in f["hands"]] if f.get("hands") else None
-        feet = [P(p) for p in f["feet"]] if f.get("feet") else None
+        snap = f.get("snap", snap_all)
+        snap_set = {"hands"} if snap is True else set(snap) if isinstance(snap, (list, tuple)) else set()
+        if snap == "hands":
+            snap_set = {"hands"}
+        inset = f.get("snap_inset", 0.004)
+        hands = [snap_pt(P(p), inset, snap in (True, "hands") or "hands" in snap_set)
+                 for p in f["hands"]] if f.get("hands") else None
+        feet = [snap_pt(P(p), inset, snap is True or "feet" in snap_set)
+                for p in f["feet"]] if f.get("feet") else None
         pen.person(P(f["hip"]), f.get("scale", 1.0), f.get("lean", 0.0), hands, feet)
         prop = f.get("prop")
         if prop:
