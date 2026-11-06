@@ -29,7 +29,9 @@ python3 scripts/compose.py --image photo.jpg --out /tmp/probe.jpg --print-outlin
 | `text.size` | int | 字号（像素），默认画布高 ×0.077 |
 | `arrow.from` | `[x, y]` | 箭头起点，一般在文案左下方 |
 | `arrow.to` | `[x, y]` | 箭头尖端，落在主体上 |
-| `arrow.curve` | number | 中段横向偏移，给箭头一点弯度 |
+| `arrow.curve` | number | 中段横向偏移（像素），给箭头一点弯度；长箭头要给到 30 以上才看得出来 |
+| `arrow.width` | 5 | 笔宽（像素） |
+| `arrow.head` | 34 | 箭头头部长度（像素） |
 
 ## 小人
 

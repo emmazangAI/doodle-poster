@@ -515,7 +515,8 @@ def main():
 
     arrow = cfg.get("arrow")
     if arrow and text_value:
-        pen.arrow(P(arrow["from"]), P(arrow["to"]), arrow.get("curve", 24))
+        pen.arrow(P(arrow["from"]), P(arrow["to"]), arrow.get("curve", 24),
+                  width=arrow.get("width", 5), head=arrow.get("head", 34))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
