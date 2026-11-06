@@ -431,9 +431,9 @@ def main():
         # 用 alpha 相减而不是 paste，边缘是渐变过渡，不会留下直角硬切
         layer.putalpha(ImageChops.subtract(layer.getchannel("A"), mask))
 
+    box_photo = (px, py, px + photo.width, py + photo.height)
     if args.mend_band > 0:
-        layer = mend_edges(layer, (px, py, px + photo.width, py + photo.height),
-                           clipped, args.mend_band)
+        layer = mend_edges(layer, box_photo, clipped, args.mend_band)
 
     canvas = Image.new("RGBA", (W, H), args.bg)
     shadow = Image.new("L", (W, H), 0)
@@ -454,8 +454,14 @@ def main():
         if not outline:
             print("warning: 轮廓剖面为空", file=sys.stderr)
         else:
-            print(json.dumps({"canvas": [W, H], "outline": outline.describe()},
+            print(json.dumps({"canvas": [W, H], "clipped_edges": clipped,
+                              "outline": outline.describe()},
                              ensure_ascii=False, indent=2))
+    bad = [k for k, v in clipped.items() if v]
+    if bad:
+        print("警告：照片画幅把主体切断了（%s），这几条边是直线切口，"
+              "补不回来；建议换一张主体四周留白的照片，或用 --mend-band 柔化"
+              % "、".join(bad), file=sys.stderr)
 
     pen = Pen(canvas, seed=args.seed)
 
