@@ -1,0 +1,15 @@
+{
+  "text":  {"value": "今天有点甜", "x": 0.33, "y": 0.15},
+  "arrow": {"from": [0.24, 0.215], "to": [0.36, 0.335], "curve": 30},
+  "props": [
+    {"type": "ladder", "from": [0.735, 0.845], "to": [0.685, 0.405]},
+    {"type": "cloud", "at": [0.80, 0.25], "scale": 2.2},
+    {"type": "wind", "at": [0.94, 0.215], "scale": 1.5}
+  ],
+  "figures": [
+    {"pose": "climb", "hip": [0.789, 0.62], "scale": 2.6, "flip": true, "no_prop": true},
+    {"pose": "sweep", "base": [0.47, 0.374], "scale": 1.8},
+    {"pose": "post",  "base": [0.285, 0.845], "scale": 2.3, "label": "甜度100%"},
+    {"pose": "fan",   "base": [0.90, 0.845], "scale": 2.2, "flip": true}
+  ]
+}

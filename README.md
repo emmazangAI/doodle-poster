@@ -84,6 +84,24 @@ python3 scripts/compose.py --image photo.heic --text "先来一块" --out poster
 - `hip` 是髋点，不是脚底；一条腿约 `40 × scale` 像素，脚写太远会变成蜘蛛腿。
 - 深色主体上黑色线条会消失。把小人放在白底或浅色部位，不要给小人物加白描边。
 
+## 场景姿势
+
+自带道具的成套动作（爬梯、扫地、游泳、盖被睡觉、躺椅、举牌、刷漆、扶风扇、推小车、坐边喝、干饭、牛马打工人）在 `scripts/poses.py` 里，用 `"pose"` 直接调，锚点用 `base`（落脚点）摆起来最省事：
+
+```json
+{"pose": "sweep", "base": [0.47, 0.374], "scale": 1.8}
+{"pose": "post",  "base": [0.30, 0.845], "scale": 2.3, "label": "甜度100%"}
+```
+
+顶层 `props` 还能单独摆长梯、云、风、水波、ZZZ、气泡、小桶、冰块。完整字段见 [`references/figure-json.md`](references/figure-json.md)。
+
+`poses.py` 是唯一数据源：小工具用的 `poses.js` 由它生成，两边几何不会漂：
+
+```bash
+python3 scripts/poses.py --list
+python3 scripts/poses.py --emit-js ../minitools/doodle-poster-tool/dist/assets/poses.js
+```
+
 ## 已知限制
 
 - 小人由几何线条绘制，干净但不"松"，比不上生图模型的手绘质感。

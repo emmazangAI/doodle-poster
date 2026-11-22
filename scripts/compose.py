@@ -25,8 +25,13 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from poses import POSES, PROPS, sample  # noqa: E402
+
 BIN = HERE / "bin" / "cutout"
 BLACK = (18, 18, 18, 255)
+# 姿势库局部单位 -> 像素：scale=1 时躯干 42 单位 ≈ 26px，与 Pen.person 的比例一致
+POSE_UNIT = 0.62
 
 RATIOS = {
     "3:4": (1536, 2048),
@@ -311,6 +316,59 @@ class Pen:
         self.stroke(pts, width=5)
         self.stroke([(cx - w * .22, cy + h * .05), (cx + w * .16, cy - h * .05)], width=4)
 
+    def prims(self, prims, origin, k, flip=False, rot=0.0, no_prop=False, has_label=False, no_face=False):
+        """按姿势库图元绘制。origin 为锚点像素坐标，k 为局部单位到像素的比例。"""
+        f = -1 if flip else 1
+        ca, sa = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+
+        def T(x, y):
+            x, y = x * f * k, y * k
+            return (origin[0] + x * ca - y * sa, origin[1] + x * sa + y * ca)
+
+        for p in prims:
+            if (p.get("prop") and no_prop) or (p.get("deco") and has_label) or (p.get("faceDeco") and no_face):
+                continue
+            width = max(2, int(round(5 * p.get("w", 1))))
+            t = p["t"]
+            if t == "line":
+                pts = [T(x, y) for x, y in sample(p["p"], p.get("smooth"), p.get("close"))]
+                if p.get("fill"):
+                    self.d.polygon(pts, fill=(255, 255, 255, 255))
+                self.stroke(pts, width=width, jitter=0.7)
+            elif t == "circle":
+                cx, cy = T(*p["c"])
+                if p.get("head"):
+                    self.circle(cx, cy, p["r"] * k, width=width)
+                else:  # 气泡、轮子要闭合，不留脑袋那种起笔缺口
+                    self.circle(cx, cy, p["r"] * k, width=width, jitter=0.4, gap=0.0)
+            elif t == "arc":
+                cx, cy = T(*p["c"])
+                a0, a1 = p["a"]
+                if flip:
+                    a0, a1 = 180 - a1, 180 - a0
+                self.stroke(self._arc_pts(cx, cy, p["r"] * k, a0 + rot, a1 + rot), width=width, jitter=0.5)
+            elif t == "dot":
+                cx, cy = T(*p["c"])
+                r = max(2.5, p["r"] * k)
+                self.d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=BLACK)
+
+    @staticmethod
+    def _arc_pts(cx, cy, r, a0, a1):
+        n = max(8, int(abs(a1 - a0) / 8))
+        return [(cx + math.cos(math.radians(a0 + (a1 - a0) * i / n)) * r,
+                 cy + math.sin(math.radians(a0 + (a1 - a0) * i / n)) * r) for i in range(n + 1)]
+
+    def ladder(self, a, b, width=40, step=36):
+        """独立长梯：a 为梯脚（左栏底），b 为梯顶（左栏顶），右栏水平平移 width 像素"""
+        self.stroke([a, b], width=5, jitter=0.7)
+        self.stroke([(a[0] + width, a[1]), (b[0] + width, b[1])], width=5, jitter=0.7)
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        n = max(2, int(length / step))
+        for i in range(n):
+            t = (i + 0.6) / (n + 0.2)
+            x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            self.stroke([(x, y), (x + width, y)], width=4, jitter=0.5)
+
     def arrow(self, a, b, curve=0.0, width=5, head=34):
         mx = (a[0] + b[0]) / 2 + curve
         my = (a[1] + b[1]) / 2
@@ -322,6 +380,24 @@ class Pen:
 
 
 # ---------------- 文字 ----------------
+def draw_label(canvas, value, box, font_path):
+    """把短字写进举牌姿势的牌面里，字号按牌面自动缩放"""
+    if not font_path or not value:
+        return
+    x0, y0, x1, y1 = box
+    size = int((y1 - y0) * 0.62)
+    while size > 8:
+        try:
+            font = ImageFont.truetype(font_path, size, index=1)
+        except Exception:
+            font = ImageFont.truetype(font_path, size)
+        b = font.getbbox(value)
+        if b[2] - b[0] <= (x1 - x0) * 0.88:
+            break
+        size -= 2
+    ImageDraw.Draw(canvas).text(((x0 + x1) / 2, (y0 + y1) / 2), value, font=font, fill=BLACK, anchor="mm")
+
+
 def draw_text(canvas, value, cx, cy, size, font_path, handwritten):
     if not font_path:
         print("warning: 没有找到可用字体，已跳过文字；用 --font 指定字体文件", file=sys.stderr)
@@ -489,6 +565,30 @@ def main():
         return outline.nearest(p[0], p[1], inset)
 
     for f in cfg.get("figures", []):
+        pose_name = f.get("pose")
+        if pose_name:
+            if pose_name not in POSES:
+                raise SystemExit(f"未知姿势 {pose_name}，可选：{', '.join(POSES)}")
+            pose = POSES[pose_name]
+            k = f.get("scale", 1.0) * POSE_UNIT
+            if "hip" in f:
+                origin = P(f["hip"])
+            elif "base" in f:  # 落脚点：把姿势的地面线（脚底/梯脚/椅脚）对齐到这里
+                bx, by = P(f["base"])
+                origin = (bx, by - pose["base"] * k)
+            else:
+                raise SystemExit(f"姿势小人需要 hip 或 base：{f}")
+            label = f.get("label")
+            pen.prims(pose["prims"], origin, k, flip=f.get("flip", False), rot=f.get("rotate", 0.0),
+                      no_prop=f.get("no_prop", False), has_label=bool(label),
+                      no_face=f.get("face") is False)
+            if label and "label_box" in pose:
+                x0, y0, x1, y1 = pose["label_box"]
+                sgn = -1 if f.get("flip") else 1
+                xs = sorted([origin[0] + x0 * k * sgn, origin[0] + x1 * k * sgn])
+                draw_label(canvas, label, (xs[0], origin[1] + y0 * k, xs[1], origin[1] + y1 * k),
+                           resolve_font(args.font)[0])
+            continue
         hx, hy = f["hip"]
         if not (0 <= hx <= 1 and 0 <= hy <= 1):
             print(f"warning: 小人 hip 超出画布 {f['hip']}，会被裁掉", file=sys.stderr)
@@ -508,6 +608,17 @@ def main():
             if prop.get("type") == "rib":
                 pen.rib(c[0], c[1], prop.get("w", 0.055) * W, prop.get("h", 0.032) * H,
                         prop.get("rotate", -6))
+
+    for pr in cfg.get("props", []):
+        kind = pr.get("type")
+        if kind == "ladder":
+            pen.ladder(P(pr["from"]), P(pr["to"]), width=pr.get("width", 0.03) * W,
+                       step=pr.get("step", 0.026) * H)
+        elif kind in PROPS:
+            pen.prims(PROPS[kind]["prims"], P(pr["at"]), pr.get("scale", 1.6) * POSE_UNIT,
+                      flip=pr.get("flip", False), rot=pr.get("rotate", 0.0))
+        else:
+            raise SystemExit(f"未知道具 {kind}，可选：ladder, {', '.join(PROPS)}")
 
     text_cfg = cfg.get("text", {})
     text_value = args.text or text_cfg.get("value")

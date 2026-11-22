@@ -58,7 +58,32 @@ python3 scripts/compose.py --image in.jpg --out /tmp/probe.jpg --print-outline
 
 ### 4. 写 figures JSON
 
-格式见 `references/figure-json.md`。要点：
+格式见 `references/figure-json.md`。**优先用场景姿势**，别再手拼坐标：
+
+| pose | 动作 | 自带道具 |
+| --- | --- | --- |
+| `climb` | 爬梯 | 短梯（爬高时用 `no_prop` 换成顶层长梯） |
+| `sweep` | 扫地 | 扫把、小桶、动效线 |
+| `swim` | 游泳 | 气泡 |
+| `sleep` | 盖被睡觉 | ZZZ |
+| `lounge` | 躺椅晒太阳 | 躺椅、遮阳伞 |
+| `post` | 举牌 | 牌子（`label` 写字） |
+| `paint` | 刷漆 | 刷子、漆桶、漆点 |
+| `fan` | 扶电风扇 | 风扇、风线 |
+| `cart` | 推小推车 | 小车、货物、地上方块 |
+| `sit_drink` | 坐边喝饮料 | 杯子、吸管、热气 |
+| `eat` | 干饭 | 一碗饭、筷子 |
+| `worker` | 牛马打工人 | 笔记本电脑、汗 |
+
+```json
+{"pose": "sweep", "base": [0.47, 0.374], "scale": 1.8}
+{"pose": "post",  "base": [0.30, 0.845], "scale": 2.3, "label": "甜度100%"}
+{"pose": "climb", "hip": [0.774, 0.62], "scale": 2.6, "flip": true, "no_prop": true}
+```
+
+`base` 是落脚点（把脚底/梯脚/椅脚对齐到该坐标），摆地面上比 `hip` 直观。顶层 `props` 可单独加长梯、云、风、水波、ZZZ、气泡、小桶、冰块。
+
+手写坐标仍然可用，要点：
 
 - 每位小人的 `hip` 是髋点，不是脚底。
 - `hands` / `feet` 写成明确的目标坐标，并加 `"snap": "hands"` 把手吸附到主体真实轮廓上（板沿、骨节、花瓣、瓶身）。
@@ -78,6 +103,9 @@ python3 scripts/compose.py --image in.jpg --figures figs.json --out poster.jpg -
 
 | 症状 | 改哪里 |
 | --- | --- |
+| 场景姿势悬空／穿进主体 | 改 `base`（地面线）或 `hip`，别只调 `scale` |
+| 梯子太短够不到顶 | `climb` 加 `"no_prop": true`，顶层用 `props: [{"type":"ladder","from":[...],"to":[...]}]` |
+| 牌面字太小 | `label` 压到 4 字以内，或把 `scale` 调大 |
 | 小人飘在空中／够不到 | 加 `"snap": "hands"`；仍悬空说明 `hip` 离主体太远，往边缘挪 |
 | 主体边缘出现直角缺口 | 别用 `--erase` 硬切；改用多边形沿轮廓擦，或去掉 `--erase` |
 | 腿太长像蜘蛛 | `feet` 的 y 收回到 `hip.y + 0.04` 左右 |
