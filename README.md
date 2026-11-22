@@ -23,11 +23,10 @@
 ## 安装
 
 ```bash
-mkdir -p ~/.codebuddy/skills
-git clone https://github.com/emmazangAI/doodle-poster.git ~/.codebuddy/skills/doodle-poster
+git clone https://github.com/emmazangAI/doodle-poster.git
 ```
 
-作为 CodeBuddy / Claude 风格的 skill 使用时，把目录放在 skills 路径下即可，`SKILL.md` 里有完整工作流。
+把仓库目录放进你所用的 agent 的 skills 路径即可（Claude Code 是 `~/.claude/skills/`，其他 agent 一般是 `<配置目录>/skills/`），`SKILL.md` 里有完整工作流。也可以不放 skills 目录，直接 `python3 scripts/compose.py --help` 当命令行工具用。
 
 ## 用法
 
